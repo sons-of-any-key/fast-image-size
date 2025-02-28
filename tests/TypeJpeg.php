@@ -13,7 +13,10 @@ namespace FastImageSize\Tests;
 
 require_once __DIR__ . '/../vendor/autoload.php';
 
-class TypeJpeg extends \PHPUnit_Framework_TestCase
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\TestCase;
+
+class TypeJpeg extends TestCase
 {
 	/** @var \FastImageSize\FastImageSize */
 	protected $imagesize;
@@ -24,7 +27,7 @@ class TypeJpeg extends \PHPUnit_Framework_TestCase
 	/** @var string Path to fixtures */
 	protected $path;
 
-	public function setUp()
+	protected function setUp(): void
 	{
 		parent::setUp();
 		$this->imagesize = new \FastImageSize\FastImageSize();
@@ -32,7 +35,7 @@ class TypeJpeg extends \PHPUnit_Framework_TestCase
 		$this->path = __DIR__ . '/fixture/';
 	}
 
-	public function dataJpegTest()
+	public static function dataJpegTest()
 	{
 		return array(
 			array(false, "\xFF\xD8somemorerandomdata1"),
@@ -43,9 +46,7 @@ class TypeJpeg extends \PHPUnit_Framework_TestCase
 		);
 	}
 
-	/**
-	 * @dataProvider dataJpegTest
-	 */
+	#[DataProvider('dataJpegTest')]
 	public function testJpegLength($expected, $data)
 	{
 		@file_put_contents($this->path . 'test_file.jpg', $data);

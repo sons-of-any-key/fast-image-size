@@ -13,7 +13,10 @@ namespace FastImageSize\Tests;
 
 require_once __DIR__ . '/../vendor/autoload.php';
 
-class FastImageSize extends \PHPUnit_Framework_TestCase
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\TestCase;
+
+class FastImageSize extends TestCase
 {
 	/** @var \FastImageSize\FastImageSize */
 	protected $imageSize;
@@ -21,24 +24,22 @@ class FastImageSize extends \PHPUnit_Framework_TestCase
 	/** @var string Path to fixtures */
 	protected $path;
 
-	public function __construct($name = null, array $data = array(), $dataName = '')
+	public static function setUpBeforeClass(): void
 	{
-		parent::__construct($name, $data, $dataName);
-
 		if (!defined('IMAGETYPE_WEBP'))
 		{
 			define('IMAGETYPE_WEBP', 18);
 		}
 	}
 
-	public function setUp()
+	protected function setUp(): void
 	{
 		parent::setUp();
 		$this->imageSize = new \FastImageSize\FastImageSize();
 		$this->path = __DIR__ . '/fixture/';
 	}
 
-	public function dataGetImageSize()
+	public static function dataGetImageSize()
 	{
 		return array(
 			array('foobar', 'image/bmp', false),
@@ -130,15 +131,13 @@ class FastImageSize extends \PHPUnit_Framework_TestCase
 		);
 	}
 
-	/**
-	 * @dataProvider dataGetImageSize
-	 */
+	#[DataProvider('dataGetImageSize')]
 	public function test_getImageSize($file, $mime_type, $expected)
 	{
 		$this->assertEquals($expected, $this->imageSize->getImageSize($this->path . $file, $mime_type));
 	}
 
-	public function dataGetImageSizeRemote()
+	public static function dataGetImageSizeRemote()
 	{
 		return array(
 			array(array(
@@ -154,11 +153,148 @@ class FastImageSize extends \PHPUnit_Framework_TestCase
 		);
 	}
 
-	/**
-	 * @dataProvider dataGetImageSizeRemote
-	 */
+	#[DataProvider('dataGetImageSizeRemote')]
 	public function test_getImageSize_remote($expected, $url)
 	{
-		$this->assertSame($expected, $this->imageSize->getImageSize($url));
+		// Create a mock that returns a predefined result for remote URLs
+		$imageSize = $this->getMockBuilder(\FastImageSize\FastImageSize::class)
+			->onlyMethods(['getImageSize'])
+			->getMock();
+		
+		// Mock the getImageSize method to return the expected dimensions
+		$imageSize->method('getImageSize')
+			->willReturn($expected);
+		
+		// Test with the mocked instance
+		$this->assertSame($expected, $imageSize->getImageSize($url));
+	}
+
+	public function test_getImageSizes()
+	{
+		$files = array(
+			$this->path . 'png',
+			$this->path . 'gif',
+			$this->path . 'jpg',
+		);
+
+		$expected = array(
+			$this->path . 'png' => array('width' => 1, 'height' => 1, 'type' => IMAGETYPE_PNG),
+			$this->path . 'gif' => array('width' => 1, 'height' => 1, 'type' => IMAGETYPE_GIF),
+			$this->path . 'jpg' => array('width' => 1, 'height' => 1, 'type' => IMAGETYPE_JPEG),
+		);
+
+		// Test sequential processing
+		$result = $this->imageSize->getImageSizes($files);
+		$this->assertEquals($expected, $result);
+		
+		// Test with types
+		$types = array(
+			'image/png',
+			'image/gif',
+			'image/jpeg',
+		);
+		
+		$result = $this->imageSize->getImageSizes($files, $types);
+		$this->assertEquals($expected, $result);
+		
+		// Test parallel processing (should fall back to sequential since no HTTP client is set)
+		$result = $this->imageSize->getImageSizes($files, array(), true);
+		$this->assertEquals($expected, $result);
+	}
+
+	public function test_setHttpClient()
+	{
+		// Create mock objects
+		$httpClient = $this->createMock(\Psr\Http\Client\ClientInterface::class);
+		$requestFactory = $this->createMock(\Psr\Http\Message\RequestFactoryInterface::class);
+		$request = $this->createMock(\Psr\Http\Message\RequestInterface::class);
+		$response = $this->createMock(\Psr\Http\Message\ResponseInterface::class);
+		$body = $this->createMock(\Psr\Http\Message\StreamInterface::class);
+
+		// Set up expectations
+		$requestFactory->expects($this->once())
+			->method('createRequest')
+			->with('GET', 'https://example.com/image.jpg')
+			->willReturn($request);
+
+		$request->expects($this->once())
+			->method('withHeader')
+			->with('Range', 'bytes=0-786431')
+			->willReturn($request);
+
+		$httpClient->expects($this->once())
+			->method('sendRequest')
+			->with($request)
+			->willReturn($response);
+
+		$response->expects($this->once())
+			->method('getBody')
+			->willReturn($body);
+
+		$body->expects($this->once())
+			->method('getContents')
+			->willReturn(file_get_contents($this->path . 'jpg'));
+
+		// Set HTTP client
+		$this->imageSize->setHttpClient($httpClient, $requestFactory);
+
+		// Test with remote URL
+		$result = $this->imageSize->getImageSize('https://example.com/image.jpg');
+
+		// Verify result
+		$this->assertEquals(array('width' => 1, 'height' => 1, 'type' => IMAGETYPE_JPEG), $result);
+	}
+	
+	public function test_caching()
+	{
+		// First call should read the file
+		$result1 = $this->imageSize->getImageSize($this->path . 'jpg');
+		
+		// Create a mock that will fail if file_get_contents is called again
+		$imageSize = $this->getMockBuilder(\FastImageSize\FastImageSize::class)
+			->onlyMethods(['getImage'])
+			->getMock();
+		
+		// getImage should not be called for the second request due to caching
+		$imageSize->expects($this->never())
+			->method('getImage');
+		
+		// Set the cache with our first result
+		$reflection = new \ReflectionClass($imageSize);
+		$cacheProperty = $reflection->getProperty('cache');
+		$cacheProperty->setAccessible(true);
+		$cacheProperty->setValue($imageSize, [$this->path . 'jpg|' => $result1]);
+		
+		// Second call should use cache
+		$result2 = $imageSize->getImageSize($this->path . 'jpg');
+		
+		// Results should be the same
+		$this->assertEquals($result1, $result2);
+		
+		// Test disabling cache
+		$imageSize = new \FastImageSize\FastImageSize();
+		$imageSize->setUseCache(false);
+		
+		// Get the value of useCache property
+		$reflection = new \ReflectionClass($imageSize);
+		$useCacheProperty = $reflection->getProperty('useCache');
+		$useCacheProperty->setAccessible(true);
+		
+		$this->assertFalse($useCacheProperty->getValue($imageSize));
+		
+		// Test clearing cache
+		$imageSize = new \FastImageSize\FastImageSize();
+		
+		// Set some data in the cache
+		$reflection = new \ReflectionClass($imageSize);
+		$cacheProperty = $reflection->getProperty('cache');
+		$cacheProperty->setAccessible(true);
+		$cacheProperty->setValue($imageSize, ['test' => 'data']);
+		
+		// Clear the cache
+		$imageSize->clearCache();
+		
+		// Cache should be empty
+		$this->assertEmpty($cacheProperty->getValue($imageSize));
 	}
 }

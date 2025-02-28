@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/app
+    environment:
+      - PHP_IDE_CONFIG=serverName=fast-image-size
+      - XDEBUG_MODE=develop,debug,coverage
+      - XDEBUG_CONFIG=client_host=host.docker.internal client_port=9003
+    command: >
+      bash -c "composer install && php -a"
+    tty: true
+    stdin_open: true
+
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/app
+    environment:
+      - XDEBUG_MODE=coverage
+    command: >
+      bash -c "composer install && ./vendor/bin/phpunit"
